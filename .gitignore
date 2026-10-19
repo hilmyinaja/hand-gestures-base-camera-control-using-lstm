@@ -1,0 +1,37 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Editor & IDE configs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Hasil Pengambilan Gambar & Video Kamera
+hasil_jepretan/
+hasil_rekaman/
+*.JPG
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.avi
+*.mov
+
+# Pretrained model binary (Diunduh otomatis oleh script jika belum ada)
+hand_landmarker.task
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
