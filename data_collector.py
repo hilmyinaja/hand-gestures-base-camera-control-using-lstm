@@ -17,7 +17,7 @@ HAND_CONNECTIONS = [
     (13, 17), (0, 17), (17, 18), (18, 19), (19, 20)
 ]
 
-# Daftar 8 Kelas Gestur Tugas Akhir
+# Daftar 9 Kelas Gestur Tugas Akhir
 GESTURE_CLASSES = [
     "rotate_cw",     # 1. Putar telunjuk searah jarum jam (Naikkan Nilai)
     "rotate_ccw",    # 2. Putar telunjuk lawan jarum jam (Turunkan Nilai)
@@ -26,7 +26,8 @@ GESTURE_CLASSES = [
     "zoom_in",       # 5. Jari mekar keluar / Pinch Out (Zoom In)
     "zoom_out",      # 6. Jari menguncup ke dalam / Pinch In (Zoom Out)
     "snap_photo",    # 7. Pose jepret / Pinch cepat (Ambil Foto)
-    "idle"           # 8. Tangan diam / pose rileks netral (Mencegah salah pemicu)
+    "record_video",  # 8. Pose dua jari / Peace / V-Sign ✌️ (Mulai/Stop Video)
+    "idle"           # 9. Tangan diam / pose rileks netral (Mencegah salah pemicu)
 ]
 
 # Konfigurasi FPS & Sekuens sesuai performa Raspberry Pi (20 FPS)
@@ -59,6 +60,19 @@ def count_samples(class_name):
     if not os.path.exists(class_dir):
         return 0
     return len([f for f in os.listdir(class_dir) if f.endswith(".npy")])
+
+def get_next_sample_filename(class_dir):
+    """Menghitung nomor file berikutnya agar tidak menimpa jika ada file yang dihapus."""
+    existing = [f for f in os.listdir(class_dir) if f.startswith("seq_") and f.endswith(".npy")]
+    nums = []
+    for f in existing:
+        try:
+            num = int(f.replace("seq_", "").replace(".npy", ""))
+            nums.append(num)
+        except ValueError:
+            pass
+    next_num = (max(nums) + 1) if nums else 1
+    return f"seq_{next_num:03d}.npy"
 
 def open_camera():
     """Membuka webcam langsung tanpa blocking."""
@@ -111,9 +125,10 @@ def main():
 
     print("Webcam berhasil aktif! Jendela visual akan langsung terbuka.")
     print("Semua kontrol dilakukan melalui keyboard pada jendela visual:")
-    print("  - Tekan '1' sampai '8' : Langsung pilih kelas gestur")
+    print("  - Tekan '1' sampai '9' : Langsung pilih kelas gestur")
     print("  - Tekan 'TAB' atau 'N' : Pindah ke kelas berikutnya")
     print("  - Tekan 'SPASI'        : Mulai hitung mundur & rekam 1 sampel")
+    print("  - Tekan 'D'/Backspace  : Hapus sampel terakhir")
     print("  - Tekan 'M'            : Toggle Mirror (Cermin) ON/OFF")
     print("  - Tekan 'Q' atau ESC   : Keluar dari program\n")
 
@@ -209,9 +224,7 @@ def main():
                 if current_len == SEQUENCE_LENGTH:
                     # Simpan sekuens ke file .npy
                     class_dir = os.path.join(DATASET_DIR, current_class)
-                    existing_files = [f for f in os.listdir(class_dir) if f.endswith(".npy")]
-                    next_num = len(existing_files) + 1
-                    file_name = f"seq_{next_num:03d}.npy"
+                    file_name = get_next_sample_filename(class_dir)
                     file_path = os.path.join(class_dir, file_name)
 
                     np.save(file_path, np.array(recorded_frames))
@@ -229,13 +242,13 @@ def main():
 
         # --- Panel Informasi Overlay GUI ---
         # Kotak Header Status
-        cv2.rectangle(frame, (10, 10), (460, 115), (25, 25, 25), -1)
-        cv2.putText(frame, f"Kelas [{current_class_idx + 1}/8]: {current_class} ({sample_count} sampel)", 
+        cv2.rectangle(frame, (10, 10), (480, 115), (25, 25, 25), -1)
+        cv2.putText(frame, f"Kelas [{current_class_idx + 1}/9]: {current_class} ({sample_count} sampel)", 
                     (20, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
         cv2.putText(frame, f"Status: {status_msg}", (20, 68),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, status_color, 2)
-        cv2.putText(frame, f"FPS: {int(fps)} | Tekan 1-8 utk pilih kelas | TAB: Next", (20, 98),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 180, 180), 1)
+        cv2.putText(frame, f"FPS: {int(fps)} | [SPASI]: Rekam | [D]: Hapus | [1-9]: Kelas", (20, 98),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
 
         # Daftar Mini Kelas di sisi kanan atas
         menu_y = 25
@@ -256,8 +269,8 @@ def main():
                 state = "COUNTDOWN"
                 countdown_start_time = time.time()
 
-        elif ord('1') <= key <= ord('8'):
-            # Langsung pilih kelas dengan tombol angka 1-8
+        elif ord('1') <= key <= ord('9'):
+            # Langsung pilih kelas dengan tombol angka 1-9
             current_class_idx = key - ord('1')
             state = "IDLE"
             status_msg = f"Beralih ke kelas {GESTURE_CLASSES[current_class_idx]}"
@@ -274,6 +287,23 @@ def main():
             # Pindah ke kelas sebelumnya
             current_class_idx = (current_class_idx - 1) % len(GESTURE_CLASSES)
             state = "IDLE"
+
+        elif key == 8 or key == ord('d') or key == ord('D'):  # BACKSPACE atau tombol 'D'
+            # Hapus sampel terakhir jika gerakan tadi salah/kurang bagus
+            class_dir = os.path.join(DATASET_DIR, current_class)
+            existing = sorted([f for f in os.listdir(class_dir) if f.startswith("seq_") and f.endswith(".npy")])
+            if existing:
+                last_file = existing[-1]
+                try:
+                    os.remove(os.path.join(class_dir, last_file))
+                    print(f"🗑️ [{current_class}] Berhasil dihapus: {last_file}")
+                    status_msg = f"🗑️ Terhapus: {last_file}"
+                    status_color = (0, 165, 255)
+                except Exception as e:
+                    print(f"[Error] Gagal menghapus: {e}")
+            else:
+                status_msg = "Belum ada sampel untuk dihapus"
+                status_color = (0, 0, 255)
 
         elif key == ord('m') or key == ord('M'):
             mirror_view = not mirror_view
