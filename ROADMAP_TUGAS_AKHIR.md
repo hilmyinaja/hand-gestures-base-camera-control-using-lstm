@@ -22,7 +22,7 @@
 | **Kontrol Power Zoom** | ⏸️ **Bypass** | [camera_control.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/camera_control.py) | Firmware Sony A5000 membatasi eksekusi zoom via USB (sesuai batasan masalah #4). |
 | **MediaPipe Hands Tracking** | ✅ **Selesai** | [test_hand_tracking.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/test_hand_tracking.py) | Pelacakan 21 landmark 3D real-time dengan koreksi orientasi tangan & mode mirror. |
 | **Perangkat Lunak Koleksi Dataset** | ✅ **Selesai** | [data_collector.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/data_collector.py) | Full GUI 9 kelas, sampling rate 20 FPS (20 frame/sekuens), tombol hapus sampel (D), dan proteksi auto-cancel. |
-| **Perekaman Dataset Mandiri** | ⏳ **Aktif** | `dataset/` | Sedang berlangsung (4/9 kelas tuntas: `snap_photo` 40, `record_video` 40, `lock_unlock` 40, `next_mode` 40). |
+| **Perekaman Dataset Mandiri** | ⏳ **Aktif** | `raw_videos/` & `dataset/` | Sedang berlangsung menuju target ~150–200 sampel/kelas (1.350–1.800 total sekuens) dengan variasi multi-subjek & 3 zona jarak. |
 | **Pelatihan LSTM & Konversi TFLite**| ⏱️ **Antrean** | `train_lstm.py` | Menunggu dataset Fase 3 terkumpul. |
 | **Inferensi Real-Time & Integrasi** | ⏱️ **Antrean** | `main_gesture_control.py` | Menunggu model TFLite Fase 4 selesai. |
 
@@ -105,15 +105,28 @@ flowchart TD
 ---
 
 ### Fase 3: Pengumpulan Dataset & Pembagian Data (⏳ Sedang Berjalan)
-* **Target Data:** $\pm$ 30–40 sampel sekuens per kelas gestur.
-* **Protokol Variasi (Bab 3.1.1 Proposal):**
-  * Variasi kecepatan gerakan (santai vs sedang).
-  * Variasi jarak terhadap kamera (0.5 meter, 1 meter, hingga 1.5–2 meter).
-  * Variasi pencahayaan ruangan (normal dan terang).
-* **Data Splitting (Bab 3.1.3 Proposal - Stratified Random Sampling):**
-  * **70%** Data Latih (*Training Set*)
-  * **15%** Data Validasi (*Validation Set*)
-  * **15%** Data Uji (*Testing Set*)
+* **Target Volume Data:**
+  * **~150 sampai 200 sampel sekuens per kelas gestur** (Total: **1.350 – 1.800 file video .mp4 dan sekuens .npy** untuk 9 kelas).
+  * Menghasilkan dataset komprehensif yang setara dengan tolok ukur pengujian laboratorium (setara referensi Mbak Zafa ~2.000 data).
+
+* **Protokol Keragaman Subjek (*Cross-Subject Diversity*):**
+  * Melibatkan **5 sampai 10 orang sukarelawan** (kombinasi pria & wanita, rentang tinggi badan, variasi massa tubuh/BMI ketebalan jari, dan ragam warna kulit) untuk menjamin sistem bersifat *user-independent*.
+  * **Beban per Orang:** Jika melibatkan 10 orang $\rightarrow$ **20 sampel per orang per kelas** (hanya butuh $\pm$ 7 menit per orang di depan webcam dengan mode Auto-Burst `C`).
+
+* **Protokol 3 Zona Jarak Operasional (0,5 – 2,0 Meter):**
+  Untuk memastikan model LSTM tahan terhadap perubahan skala ukuran tangan di layar:
+  1. **Zona Dekat (0,5 – 0,8 m) — ~7 sampel/orang:** Posisi duduk normal di meja laptop/kamera (tangan tampak besar).
+  2. **Zona Sedang (1,0 – 1,2 m) — ~7 sampel/orang:** Posisi duduk santai kursi dimundurkan (tangan tampak sedang).
+  3. **Zona Jauh (1,5 – 2,0 m) — ~6 sampel/orang:** Posisi berdiri mundur untuk skenario vlogging/foto seluruh badan (tangan tampak kecil).
+
+* **Data Splitting & Skema Evaluasi Skripsi (Bab 3.1.3 & Bab 4):**
+  * **Skenario 1 (Stratified Random Split):**
+    * **70%** Data Latih (*Training Set*)
+    * **15%** Data Validasi (*Validation Set*)
+    * **15%** Data Uji (*Testing Set*)
+  * **Skenario 2 (User-Independent / Unseen Subjects):**
+    * Data dari 8 subjek digunakan untuk melatih model (*Train/Val*).
+    * Data dari 2 subjek baru disimpan khusus murni untuk pengujian (*Testing Set*) guna membuktikan sistem dapat mengenali gestur dari orang asing yang belum pernah dilihat model sebelumnya.
 
 ---
 
@@ -156,7 +169,7 @@ flowchart TD
 | :---: | :--- | :---: |
 | **Fase 1** | Desain 9 kelas gestur & State Machine HCI disepakati | ✅ **Selesai** |
 | **Fase 2** | Skrip `data_collector.py` selesai dibuat (Full GUI 9 kelas) | ✅ **Selesai** |
-| **Fase 3** | Dataset `dataset/` terkumpul lengkap (30–40 sampel x 9 kelas) | ⏳ **Sedang Berjalan** |
+| **Fase 3** | Dataset `raw_videos/` & `dataset/` terkumpul lengkap (target ~150–200 sampel x 9 kelas) | ⏳ **Sedang Berjalan** |
 | **Fase 4** | Model LSTM terlatih, file `.tflite` diekspor, dan Confusion Matrix dihasilkan | ⏱️ Antrean |
 | **Fase 5** | Inferensi real-time lancar dengan continuous scroll sliding window & debouncing | ⏱️ Antrean |
 | **Fase 6** | Integrasi penuh ke `camera_control.py` & pengambilan data tabel skripsi | ⏱️ Antrean |
