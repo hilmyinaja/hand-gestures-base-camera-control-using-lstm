@@ -20,6 +20,7 @@ env/
 # Hasil Pengambilan Gambar & Video Kamera
 hasil_jepretan/
 hasil_rekaman/
+raw_videos/
 *.JPG
 *.jpg
 *.jpeg

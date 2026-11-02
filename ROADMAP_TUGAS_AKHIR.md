@@ -85,23 +85,21 @@ flowchart TD
 ---
 
 ### Fase 2: Pembangunan Perangkat Lunak Akuisisi Dataset (✅ Selesai)
-* **File Terwujud:** [data_collector.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/data_collector.py)
+* **File Terwujud:** [data_collector.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/data_collector.py) dan [extract_dataset_from_videos.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/extract_dataset_from_videos.py)
 * **Karakteristik Teknis:**
-  * Ekstraksi 21 koordinat $(x, y, z)$ dinormalisasi relatif terhadap *wrist* (landmark 0) $\rightarrow$ vektor 63 dimensi.
-  * Menangkap **20 frame berurutan** per sampel (berdurasi 1.0 detik pada 20 FPS, diselaraskan dengan performa riil Raspberry Pi).
-  * Dilengkapi pembatas laju *frame* (50 ms per frame), hitung mundur 3 detik, progress bar visual, penomoran file anti-overwrite, dan tombol pintas `D` / `Backspace` untuk menghapus sampel terakhir yang salah gerak.
-  * Menyimpan file array NumPy `(20, 63)` ke dalam folder:
+  * **Dual-Saving Pipeline (1:1 Pairing):** Setiap sampel disimpan serentak sebagai:
+    1. Video mentah bersih 20 FPS (durasi tepat 1.0 detik, codec MP4V) ke `raw_videos/<kelas>/seq_XXX.mp4`.
+    2. Fitur koordinat landmark ter-normalisasi (20 frame, 63 fitur) ke `dataset/<kelas>/seq_XXX.npy`.
+  * **Mode Auto-Burst / Continuous (Tombol `C`):** Merekam berulang kali secara otomatis dengan jeda istirahat 1.2 detik antar-sampel, memungkinkan pengumpulan 100 sampel hanya dalam ~3.5 menit per kelas.
+  * **Reproducibility Safety:** Dilengkapi skrip [extract_dataset_from_videos.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/extract_dataset_from_videos.py) untuk mengekstrak ulang seluruh `.npy` dari `raw_videos/` secara otomatis jika diperlukan.
+  * Menyimpan struktur folder berpasangan:
     ```
-    dataset/
-    ├── rotate_cw/
-    ├── rotate_ccw/
-    ├── next_mode/
-    ├── lock_unlock/
-    ├── zoom_in/
-    ├── zoom_out/
-    ├── snap_photo/
-    ├── record_video/
-    └── idle/
+    ├── raw_videos/            <-- Video mentah .mp4 (20 FPS, 1 detik)
+    │   ├── rotate_cw/
+    │   └── ...
+    └── dataset/               <-- Koordinat landmark .npy (20, 63)
+        ├── rotate_cw/
+        └── ...
     ```
 
 ---

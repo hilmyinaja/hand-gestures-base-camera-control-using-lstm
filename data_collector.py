@@ -32,9 +32,12 @@ GESTURE_CLASSES = [
 
 # Konfigurasi FPS & Sekuens sesuai performa Raspberry Pi (20 FPS)
 TARGET_FPS = 20
-SEQUENCE_LENGTH = 20           # 20 frame per sekuens = 1.0 detik durasi gerakan
+SEQUENCE_LENGTH = 20           # 20 frame per sekuens = tepat 1.0 detik durasi gerakan
 FRAME_INTERVAL = 1.0 / TARGET_FPS  # 0.05 detik (50 ms) per frame
+BURST_REST_DURATION = 1.2      # 1.2 detik jeda istirahat antar-sampel pada mode Auto-Burst
+
 DATASET_DIR = "dataset"
+RAW_VIDEOS_DIR = "raw_videos"
 
 def ensure_model_exists(model_path="hand_landmarker.task"):
     if not os.path.exists(model_path):
@@ -55,24 +58,29 @@ def extract_normalized_landmarks(hand_landmarks):
     return np.array(features, dtype=np.float32)
 
 def count_samples(class_name):
-    """Menghitung berapa banyak sampel .npy yang sudah tersimpan untuk kelas ini."""
-    class_dir = os.path.join(DATASET_DIR, class_name)
-    if not os.path.exists(class_dir):
-        return 0
-    return len([f for f in os.listdir(class_dir) if f.endswith(".npy")])
+    """Menghitung berapa banyak sampel .npy dan .mp4 yang tersimpan untuk kelas ini."""
+    npy_dir = os.path.join(DATASET_DIR, class_name)
+    mp4_dir = os.path.join(RAW_VIDEOS_DIR, class_name)
+    npy_count = len([f for f in os.listdir(npy_dir) if f.endswith(".npy")]) if os.path.exists(npy_dir) else 0
+    mp4_count = len([f for f in os.listdir(mp4_dir) if f.endswith(".mp4")]) if os.path.exists(mp4_dir) else 0
+    return npy_count, mp4_count
 
-def get_next_sample_filename(class_dir):
-    """Menghitung nomor file berikutnya agar tidak menimpa jika ada file yang dihapus."""
-    existing = [f for f in os.listdir(class_dir) if f.startswith("seq_") and f.endswith(".npy")]
+def get_next_sample_index(class_name):
+    """Menghitung nomor file berikutnya dengan memeriksa folder dataset dan raw_videos agar sinkron."""
+    npy_dir = os.path.join(DATASET_DIR, class_name)
+    mp4_dir = os.path.join(RAW_VIDEOS_DIR, class_name)
+    
     nums = []
-    for f in existing:
-        try:
-            num = int(f.replace("seq_", "").replace(".npy", ""))
-            nums.append(num)
-        except ValueError:
-            pass
-    next_num = (max(nums) + 1) if nums else 1
-    return f"seq_{next_num:03d}.npy"
+    for d in [npy_dir, mp4_dir]:
+        if os.path.exists(d):
+            for f in os.listdir(d):
+                if f.startswith("seq_") and (f.endswith(".npy") or f.endswith(".mp4")):
+                    try:
+                        num = int(f.split("_")[1].split(".")[0])
+                        nums.append(num)
+                    except (ValueError, IndexError):
+                        pass
+    return (max(nums) + 1) if nums else 1
 
 def open_camera():
     """Membuka webcam langsung tanpa blocking."""
@@ -92,14 +100,74 @@ def open_camera():
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     return cap
 
-def main():
-    print("=======================================================")
-    print("   Perekam Dataset Gestur Tugas Akhir (Full GUI)       ")
-    print("=======================================================")
+def save_sequence_data(class_name, sample_idx, recorded_features, recorded_raw_frames, frame_size):
+    """Menyimpan array landmark (.npy) DAN video mentah 20 FPS (.mp4) secara sinkron 1:1."""
+    class_npy_dir = os.path.join(DATASET_DIR, class_name)
+    class_mp4_dir = os.path.join(RAW_VIDEOS_DIR, class_name)
+    os.makedirs(class_npy_dir, exist_ok=True)
+    os.makedirs(class_mp4_dir, exist_ok=True)
 
-    os.makedirs(DATASET_DIR, exist_ok=True)
+    base_name = f"seq_{sample_idx:03d}"
+    npy_path = os.path.join(class_npy_dir, f"{base_name}.npy")
+    mp4_path = os.path.join(class_mp4_dir, f"{base_name}.mp4")
+
+    # 1. Simpan Fitur Landmark (20, 63)
+    np.save(npy_path, np.array(recorded_features, dtype=np.float32))
+
+    # 2. Simpan Video Mentah 20 FPS (Tepat 20 Frame, 1.0 Detik)
+    w, h = frame_size
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    writer = cv2.VideoWriter(mp4_path, fourcc, float(TARGET_FPS), (w, h))
+    for f in recorded_raw_frames:
+        writer.write(f)
+    writer.release()
+
+    print(f"✔ [{class_name}] Tersimpan: {base_name}.npy & {base_name}.mp4 ({len(recorded_raw_frames)} frames @ 20 FPS)")
+    return base_name
+
+def delete_last_sample(class_name):
+    """Menghapus sampel terakhir (baik .npy maupun .mp4) agar data tetap sinkron."""
+    npy_dir = os.path.join(DATASET_DIR, class_name)
+    mp4_dir = os.path.join(RAW_VIDEOS_DIR, class_name)
+
+    sample_nums = []
+    for d, ext in [(npy_dir, ".npy"), (mp4_dir, ".mp4")]:
+        if os.path.exists(d):
+            for f in os.listdir(d):
+                if f.startswith("seq_") and f.endswith(ext):
+                    try:
+                        num = int(f.split("_")[1].split(".")[0])
+                        sample_nums.append(num)
+                    except:
+                        pass
+    if not sample_nums:
+        return None
+
+    last_num = max(sample_nums)
+    base_name = f"seq_{last_num:03d}"
+    deleted = []
+
+    npy_file = os.path.join(npy_dir, f"{base_name}.npy")
+    if os.path.exists(npy_file):
+        os.remove(npy_file)
+        deleted.append(f"{base_name}.npy")
+
+    mp4_file = os.path.join(mp4_dir, f"{base_name}.mp4")
+    if os.path.exists(mp4_file):
+        os.remove(mp4_file)
+        deleted.append(f"{base_name}.mp4")
+
+    return ", ".join(deleted)
+
+def main():
+    print("=================================================================")
+    print("   Perekam Dataset Gestur Tugas Akhir Hilmy (Npy + Video MP4)   ")
+    print("=================================================================")
+
+    # Buat direktori penyimpanan
     for c in GESTURE_CLASSES:
         os.makedirs(os.path.join(DATASET_DIR, c), exist_ok=True)
+        os.makedirs(os.path.join(RAW_VIDEOS_DIR, c), exist_ok=True)
 
     model_path = os.path.join(os.path.dirname(__file__), "hand_landmarker.task")
     ensure_model_exists(model_path)
@@ -116,31 +184,41 @@ def main():
     )
     detector = vision.HandLandmarker.create_from_options(options)
 
-    # Buka Webcam langsung di awal (seperti test_hand_tracking.py)
+    # Aktifkan Webcam
     print("Mengaktifkan webcam...")
     cap = open_camera()
     if not cap.isOpened():
         print("[Error] Webcam tidak terdeteksi! Pastikan kamera terpasang dan tidak dipakai aplikasi lain.")
         return
 
-    print("Webcam berhasil aktif! Jendela visual akan langsung terbuka.")
-    print("Semua kontrol dilakukan melalui keyboard pada jendela visual:")
-    print("  - Tekan '1' sampai '9' : Langsung pilih kelas gestur")
-    print("  - Tekan 'TAB' atau 'N' : Pindah ke kelas berikutnya")
-    print("  - Tekan 'SPASI'        : Mulai hitung mundur & rekam 1 sampel")
-    print("  - Tekan 'D'/Backspace  : Hapus sampel terakhir")
-    print("  - Tekan 'M'            : Toggle Mirror (Cermin) ON/OFF")
-    print("  - Tekan 'Q' atau ESC   : Keluar dari program\n")
+    print("Webcam berhasil aktif! Jendela visual terbuka.")
+    print("Petunjuk Kontrol Keyboard:")
+    print("  - [SPASI]        : Rekam 1 sampel tunggal (Single Shot)")
+    print("  - [C]            : Toggle Mode AUTO-BURST (Rekam otomatis berulang)")
+    print("  - [1] s/d [9]    : Langsung pilih kelas gestur")
+    print("  - [TAB] / [N]    : Pindah ke kelas berikutnya")
+    print("  - [B]            : Pindah ke kelas sebelumnya")
+    print("  - [D] / [BkSp]   : Hapus sampel terakhir (.npy + .mp4)")
+    print("  - [M]            : Toggle Mirror (Cermin) ON/OFF")
+    print("  - [Q] / [ESC]    : Keluar dari program\n")
 
     current_class_idx = 0
     mirror_view = True
 
-    state = "IDLE"  # "IDLE", "COUNTDOWN", "RECORDING"
+    # State Machine
+    state = "IDLE"  # "IDLE", "COUNTDOWN", "RECORDING", "BURST_REST"
+    burst_mode = False
+    burst_count_session = 0
+
     countdown_start_time = 0
     countdown_seconds = 3
-    recorded_frames = []
+
+    recorded_features = []
+    recorded_raw_frames = []
     last_frame_recorded_time = 0
-    status_msg = "Tekan SPASI untuk mulai rekam"
+    burst_rest_start_time = 0
+
+    status_msg = "Tekan SPASI (Single) atau C (Auto-Burst)"
     status_color = (255, 255, 255)
 
     start_time = time.time()
@@ -156,6 +234,9 @@ def main():
         if mirror_view:
             frame = cv2.flip(frame, 1)
 
+        # Salin frame mentah bersih (TANPA garis skeleton) untuk disimpan ke video .mp4
+        clean_raw_frame = frame.copy()
+
         h, w, _ = frame.shape
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
@@ -163,7 +244,7 @@ def main():
         timestamp_ms = int((time.time() - start_time) * 1000)
         result = detector.detect_for_video(mp_image, timestamp_ms)
 
-        # Hitung FPS
+        # Hitung FPS real-time
         now = time.time()
         fps = 1.0 / (now - prev_time) if (now - prev_time) > 0 else 0
         prev_time = now
@@ -175,7 +256,7 @@ def main():
             hand_landmarks = result.hand_landmarks[0]
             hand_features = extract_normalized_landmarks(hand_landmarks)
 
-            # Gambar visual landmark
+            # Gambar visual landmark pada frame preview
             coords = [(int(lm.x * w), int(lm.y * h)) for lm in hand_landmarks]
             for s, e in HAND_CONNECTIONS:
                 cv2.line(frame, coords[s], coords[e], (0, 255, 128), 2)
@@ -185,9 +266,9 @@ def main():
                 cv2.circle(frame, pt, size, color, -1)
 
         current_class = GESTURE_CLASSES[current_class_idx]
-        sample_count = count_samples(current_class)
+        npy_cnt, mp4_cnt = count_samples(current_class)
 
-        # --- State Machine Perekaman ---
+        # --- Logika State Machine Perekaman ---
         if state == "IDLE":
             pass
 
@@ -195,26 +276,30 @@ def main():
             elapsed = time.time() - countdown_start_time
             remaining = countdown_seconds - int(elapsed)
             if remaining > 0:
-                status_msg = f"SIAP-SIAP: {remaining}..."
+                mode_tag = "[AUTO-BURST]" if burst_mode else "[SINGLE]"
+                status_msg = f"{mode_tag} SIAP-SIAP DALAM: {remaining}..."
                 status_color = (0, 255, 255)
-                # Angka besar di tengah layar
+                # Tampilkan angka besar di tengah layar
                 cv2.putText(frame, str(remaining), (w // 2 - 35, h // 2 + 35),
                             cv2.FONT_HERSHEY_SIMPLEX, 3.5, (0, 255, 255), 6)
             else:
                 state = "RECORDING"
-                recorded_frames = []
+                recorded_features = []
+                recorded_raw_frames = []
                 last_frame_recorded_time = 0
 
         elif state == "RECORDING":
             if hand_present:
                 now_rec = time.time()
-                # Kunci sampling rate ke 20 FPS (setiap 50 ms)
+                # Kunci sampling rate ke tepat 20 FPS (interval 50 ms)
                 if (now_rec - last_frame_recorded_time) >= FRAME_INTERVAL:
-                    recorded_frames.append(hand_features)
+                    recorded_features.append(hand_features)
+                    recorded_raw_frames.append(clean_raw_frame)
                     last_frame_recorded_time = now_rec
 
-                current_len = len(recorded_frames)
-                status_msg = f"● MEREKAM (20 FPS): {current_len}/{SEQUENCE_LENGTH}"
+                current_len = len(recorded_features)
+                mode_label = f"[BURST #{burst_count_session + 1}]" if burst_mode else "[SINGLE]"
+                status_msg = f"● {mode_label} MEREKAM (20 FPS): {current_len}/{SEQUENCE_LENGTH}"
                 status_color = (0, 0, 255)
 
                 # Progress bar di bawah layar
@@ -222,40 +307,79 @@ def main():
                 cv2.rectangle(frame, (20, h - 35), (20 + progress_w, h - 20), (0, 0, 255), -1)
 
                 if current_len == SEQUENCE_LENGTH:
-                    # Simpan sekuens ke file .npy
-                    class_dir = os.path.join(DATASET_DIR, current_class)
-                    file_name = get_next_sample_filename(class_dir)
-                    file_path = os.path.join(class_dir, file_name)
+                    # Simpan data .npy DAN video .mp4
+                    next_idx = get_next_sample_index(current_class)
+                    saved_base = save_sequence_data(current_class, next_idx, recorded_features, recorded_raw_frames, (w, h))
 
-                    np.save(file_path, np.array(recorded_frames))
-                    print(f"✔ [{current_class}] Tersimpan: {file_name}")
-
-                    state = "IDLE"
-                    status_msg = f"✔ TERSIMPAN ({file_name})! Tekan SPASI lagi"
-                    status_color = (0, 255, 0)
+                    if burst_mode:
+                        burst_count_session += 1
+                        state = "BURST_REST"
+                        burst_rest_start_time = time.time()
+                    else:
+                        state = "IDLE"
+                        status_msg = f"✔ TERSIMPAN ({saved_base})! Tekan SPASI atau C"
+                        status_color = (0, 255, 0)
             else:
-                # Batalkan jika tangan hilang di tengah rekaman
-                state = "IDLE"
-                recorded_frames = []
-                status_msg = "[BATAL] Tangan tidak terdeteksi! Ulangi SPASI"
-                status_color = (0, 0, 255)
+                # Batalkan jika tangan hilang di tengah sekuens
+                if burst_mode:
+                    status_msg = "[BATAL] Tangan hilang! Posisikan tangan kembali..."
+                    status_color = (0, 0, 255)
+                    # Beri jeda sejenak lalu coba lagi
+                    state = "BURST_REST"
+                    burst_rest_start_time = time.time()
+                else:
+                    state = "IDLE"
+                    recorded_features = []
+                    recorded_raw_frames = []
+                    status_msg = "[BATAL] Tangan tidak terdeteksi! Ulangi SPASI"
+                    status_color = (0, 0, 255)
+
+        elif state == "BURST_REST":
+            rest_elapsed = time.time() - burst_rest_start_time
+            rest_remaining = BURST_REST_DURATION - rest_elapsed
+            if rest_remaining > 0:
+                status_msg = f"AUTO-BURST: Berhasil {burst_count_session} sampel! Jeda istirahat ({rest_remaining:.1f}s)"
+                status_color = (0, 255, 255)
+                # Tampilkan visual istirahat/reset tangan
+                cv2.rectangle(frame, (w // 2 - 200, h // 2 - 40), (w // 2 + 200, h // 2 + 40), (40, 40, 40), -1)
+                cv2.putText(frame, f"ATUR TANGAN ({rest_remaining:.1f}s)", (w // 2 - 170, h // 2 + 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
+            else:
+                # Masuk langsung ke perekaman sampel berikutnya
+                if hand_present:
+                    state = "RECORDING"
+                    recorded_features = []
+                    recorded_raw_frames = []
+                    last_frame_recorded_time = 0
+                else:
+                    # Tunggu hingga tangan masuk kembali ke layar
+                    status_msg = "AUTO-BURST: Menunggu tangan masuk ke layar..."
+                    status_color = (0, 165, 255)
 
         # --- Panel Informasi Overlay GUI ---
         # Kotak Header Status
-        cv2.rectangle(frame, (10, 10), (480, 115), (25, 25, 25), -1)
-        cv2.putText(frame, f"Kelas [{current_class_idx + 1}/9]: {current_class} ({sample_count} sampel)", 
-                    (20, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+        header_h = 125 if burst_mode else 115
+        cv2.rectangle(frame, (10, 10), (510, header_h), (25, 25, 25), -1)
+        cv2.putText(frame, f"Kelas [{current_class_idx + 1}/9]: {current_class} (Npy:{npy_cnt} | Vid:{mp4_cnt})", 
+                    (20, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
         cv2.putText(frame, f"Status: {status_msg}", (20, 68),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, status_color, 2)
-        cv2.putText(frame, f"FPS: {int(fps)} | [SPASI]: Rekam | [D]: Hapus | [1-9]: Kelas", (20, 98),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, status_color, 2)
+
+        if burst_mode:
+            cv2.putText(frame, f"[AUTO-BURST ON: {burst_count_session} sesi] Tekan [C] atau [SPASI] utk STOP", (20, 95),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 128), 1)
+            cv2.putText(frame, f"FPS: {int(fps)} | [D]: Hapus | [1-9]: Kelas | [M]: Mirror", (20, 118),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
+        else:
+            cv2.putText(frame, f"FPS: {int(fps)} | [SPASI]: 1x Rekam | [C]: Auto-Burst | [D]: Hapus", (20, 98),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
 
         # Daftar Mini Kelas di sisi kanan atas
         menu_y = 25
         for i, c_name in enumerate(GESTURE_CLASSES):
             c_color = (0, 255, 128) if i == current_class_idx else (160, 160, 160)
-            c_count = count_samples(c_name)
-            cv2.putText(frame, f"{i+1}.{c_name} ({c_count})", (w - 170, menu_y),
+            n_c, _ = count_samples(c_name)
+            cv2.putText(frame, f"{i+1}.{c_name} ({n_c})", (w - 175, menu_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.38, c_color, 1)
             menu_y += 18
 
@@ -265,42 +389,54 @@ def main():
         key = cv2.waitKey(1) & 0xFF
 
         if key == 32:  # Tombol SPASI
-            if state == "IDLE":
+            if burst_mode:
+                # Matikan mode burst jika sedang aktif
+                burst_mode = False
+                state = "IDLE"
+                status_msg = f"Auto-Burst dihentikan ({burst_count_session} sampel diambil)."
+                status_color = (255, 255, 255)
+            elif state == "IDLE":
+                state = "COUNTDOWN"
+                countdown_start_time = time.time()
+
+        elif key == ord('c') or key == ord('C'):  # Tombol 'C' (Toggle Auto-Burst)
+            if burst_mode:
+                burst_mode = False
+                state = "IDLE"
+                status_msg = f"Auto-Burst dihentikan ({burst_count_session} sampel diambil)."
+                status_color = (255, 255, 255)
+            else:
+                burst_mode = True
+                burst_count_session = 0
                 state = "COUNTDOWN"
                 countdown_start_time = time.time()
 
         elif ord('1') <= key <= ord('9'):
             # Langsung pilih kelas dengan tombol angka 1-9
+            burst_mode = False
             current_class_idx = key - ord('1')
             state = "IDLE"
             status_msg = f"Beralih ke kelas {GESTURE_CLASSES[current_class_idx]}"
             status_color = (255, 255, 255)
 
         elif key == 9 or key == ord('n') or key == ord('N'):  # Tombol TAB atau 'N'
-            # Pindah ke kelas berikutnya
+            burst_mode = False
             current_class_idx = (current_class_idx + 1) % len(GESTURE_CLASSES)
             state = "IDLE"
             status_msg = f"Beralih ke kelas {GESTURE_CLASSES[current_class_idx]}"
             status_color = (255, 255, 255)
 
         elif key == ord('b') or key == ord('B'):
-            # Pindah ke kelas sebelumnya
+            burst_mode = False
             current_class_idx = (current_class_idx - 1) % len(GESTURE_CLASSES)
             state = "IDLE"
 
         elif key == 8 or key == ord('d') or key == ord('D'):  # BACKSPACE atau tombol 'D'
-            # Hapus sampel terakhir jika gerakan tadi salah/kurang bagus
-            class_dir = os.path.join(DATASET_DIR, current_class)
-            existing = sorted([f for f in os.listdir(class_dir) if f.startswith("seq_") and f.endswith(".npy")])
-            if existing:
-                last_file = existing[-1]
-                try:
-                    os.remove(os.path.join(class_dir, last_file))
-                    print(f"🗑️ [{current_class}] Berhasil dihapus: {last_file}")
-                    status_msg = f"🗑️ Terhapus: {last_file}"
-                    status_color = (0, 165, 255)
-                except Exception as e:
-                    print(f"[Error] Gagal menghapus: {e}")
+            deleted_info = delete_last_sample(current_class)
+            if deleted_info:
+                print(f"🗑️ [{current_class}] Berhasil dihapus: {deleted_info}")
+                status_msg = f"🗑️ Terhapus: {deleted_info}"
+                status_color = (0, 165, 255)
             else:
                 status_msg = "Belum ada sampel untuk dihapus"
                 status_color = (0, 0, 255)
@@ -317,7 +453,7 @@ def main():
         detector.close()
     except:
         pass
-    print("\nProgram selesai. Sampel kamu tersimpan di folder 'dataset/'.")
+    print("\nProgram selesai. Sampel tersimpan rapi di 'dataset/' dan 'raw_videos/'.")
 
 if __name__ == "__main__":
     main()
