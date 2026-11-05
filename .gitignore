@@ -29,6 +29,10 @@ raw_videos/
 *.avi
 *.mov
 
+# Kecualikan plot hasil evaluasi training dari ignore
+!confusion_matrix.png
+!training_history.png
+
 # Pretrained model binary (Diunduh otomatis oleh script jika belum ada)
 hand_landmarker.task
 

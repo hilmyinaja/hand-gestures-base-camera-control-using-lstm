@@ -22,9 +22,9 @@
 | **Kontrol Power Zoom** | ⏸️ **Bypass** | [camera_control.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/camera_control.py) | Firmware Sony A5000 membatasi eksekusi zoom via USB (sesuai batasan masalah #4). |
 | **MediaPipe Hands Tracking** | ✅ **Selesai** | [test_hand_tracking.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/test_hand_tracking.py) | Pelacakan 21 landmark 3D real-time dengan koreksi orientasi tangan & mode mirror. |
 | **Perangkat Lunak Koleksi Dataset** | ✅ **Selesai** | [data_collector.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/data_collector.py) | Full GUI 9 kelas, sampling rate 20 FPS (20 frame/sekuens), tombol hapus sampel (D), dan proteksi auto-cancel. |
-| **Perekaman Dataset Mandiri** | ⏳ **Aktif** | `raw_videos/` & `dataset/` | Sedang berlangsung menuju target ~150–200 sampel/kelas (1.350–1.800 total sekuens) dengan variasi multi-subjek & 3 zona jarak. |
-| **Pelatihan LSTM & Konversi TFLite**| ⏱️ **Antrean** | `train_lstm.py` | Menunggu dataset Fase 3 terkumpul. |
-| **Inferensi Real-Time & Integrasi** | ⏱️ **Antrean** | `main_gesture_control.py` | Menunggu model TFLite Fase 4 selesai. |
+| **Perekaman Dataset Mandiri** | ✅ **Baseline Aktif** | `raw_videos/` & `dataset/` | Baseline 189 sampel (21 sampel/kelas x 9 kelas) selesai; siap ditambah berkala. |
+| **Pelatihan LSTM & Konversi TFLite**| ✅ **Selesai** | [train_lstm.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/train_lstm.py) | Model Stacked LSTM berhasil dilatih (Akurasi Uji: 100%, Loss: 0.025), diekspor ke `model_gesture.tflite` (269.9 KB FP16). |
+| **Inferensi Real-Time & Integrasi** | ⏳ **Aktif** | `main_gesture_control.py` | Siap menguji inferensi webcam real-time dengan sliding window 20 frame & filter debouncing. |
 
 ---
 
@@ -130,19 +130,23 @@ flowchart TD
 
 ---
 
-### Fase 4: Pelatihan Model LSTM & Konversi TFLite (⏱️ Antrean Berikutnya)
-* **Arsitektur Model Deep Learning:**
+### Fase 4: Pelatihan Model LSTM & Konversi TFLite (✅ Selesai)
+* **File Terwujud:** [train_lstm.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/train_lstm.py), `model_gesture.keras`, `model_gesture.tflite`, `confusion_matrix.png`, `training_history.png`.
+* **Arsitektur Model Deep Learning (Sesuai Subbab 3.3.1):**
   * *Input Shape:* `(batch_size, 20, 63)`
-  * *LSTM Layers:* 2–3 layer LSTM (misal: 64 unit ➔ 32 unit) dengan *Dropout* (0.2–0.3).
-  * *Dense Layer:* Lapisan *Dense Softmax* untuk 9 kelas probabilitas.
-* **Evaluasi Metrik (Bab 3.5.1 Proposal):**
-  * Akurasi, Precision, Recall, F1-Score, dan grafik *Confusion Matrix*.
-* **Ekspor Edge Computing (Raspberry Pi):**
-  * Konversi model Keras/TensorFlow ke format **TensorFlow Lite (`.tflite`)** untuk inferensi ringan tanpa GPU.
+  * *Stacked LSTM:* Layer 1 (64 unit, return_sequences=True) ➔ Dropout (0.2) ➔ Layer 2 (64 unit, return_sequences=False, unroll=True) ➔ Dropout (0.2).
+  * *Dense Layers:* Dense (64 neuron, ReLU) ➔ Output Dense (9 neuron, Softmax).
+* **Hasil Evaluasi Data Uji (Testing Set 15%):**
+  * **Test Accuracy:** **100.00%** (29 dari 29 sampel uji terklasifikasi sempurna).
+  * **Test Loss:** **0.0250**
+  * **F1-Score:** 1.0000 merata di seluruh 9 kelas gestur.
+  * Grafik *Confusion Matrix* tersimpan di `confusion_matrix.png` dan kurva loss/akurasi di `training_history.png`.
+* **Ekspor Edge Computing (Raspberry Pi - Subbab 3.3.3):**
+  * Model berhasil dikonversi ke format **TensorFlow Lite FP16 (`model_gesture.tflite`)** berukuran **269.9 KB** (efisiensi kompresi 68.9% dari file Keras 867.5 KB) menggunakan *Pure TFLite Builtins* tanpa dependensi Flex ops.
 
 ---
 
-### Fase 5: Sistem Inferensi Real-Time & Logika Debouncing (⏱️ Antrean)
+### Fase 5: Sistem Inferensi Real-Time & Logika Debouncing (⏳ Sedang Berjalan)
 * **Sliding Window Buffer:**
   * Antrean FIFO berkapasitas 20 frame. Setiap frame baru masuk, inferensi TFLite dijalankan berkala.
 * **Continuous Scroll & Adaptive Debouncing:**
@@ -170,6 +174,6 @@ flowchart TD
 | **Fase 1** | Desain 9 kelas gestur & State Machine HCI disepakati | ✅ **Selesai** |
 | **Fase 2** | Skrip `data_collector.py` selesai dibuat (Full GUI 9 kelas) | ✅ **Selesai** |
 | **Fase 3** | Dataset `raw_videos/` & `dataset/` terkumpul lengkap (target ~150–200 sampel x 9 kelas) | ⏳ **Sedang Berjalan** |
-| **Fase 4** | Model LSTM terlatih, file `.tflite` diekspor, dan Confusion Matrix dihasilkan | ⏱️ Antrean |
-| **Fase 5** | Inferensi real-time lancar dengan continuous scroll sliding window & debouncing | ⏱️ Antrean |
+| **Fase 4** | Model LSTM terlatih, file `.tflite` diekspor, dan Confusion Matrix dihasilkan | ✅ **Selesai** |
+| **Fase 5** | Inferensi real-time lancar dengan continuous scroll sliding window & debouncing | ⏳ **Aktif** |
 | **Fase 6** | Integrasi penuh ke `camera_control.py` & pengambilan data tabel skripsi | ⏱️ Antrean |

@@ -1,0 +1,11 @@
+[
+    "rotate_cw",
+    "rotate_ccw",
+    "next_mode",
+    "lock_unlock",
+    "zoom_in",
+    "zoom_out",
+    "snap_photo",
+    "record_video",
+    "idle"
+]
