@@ -132,15 +132,18 @@ flowchart TD
 
 ### Fase 4: Pelatihan Model LSTM & Konversi TFLite (✅ Selesai)
 * **File Terwujud:** [train_lstm.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/train_lstm.py), `model_gesture.keras`, `model_gesture.tflite`, `confusion_matrix.png`, `training_history.png`.
+* **Sistem Pelacakan Eksperimen & Versioning Model (`runs/`):**
+  * Setiap kali pelatihan dijalankan, artefak disimpan secara otomatis dan terisolasi ke folder run (`runs/run_XXX_YYYYMMDD_HHMM/`): bobot Keras, model TFLite, `confusion_matrix.png`, `training_history.png`, `metrics.json`, dan `summary_report.txt`.
+  * Riwayat performa seluruh eksperimen direkapitulasi secara otomatis ke `runs/experiments_history.csv` dan `runs/experiments_history.md` (siap disalin ke Bab 4 Skripsi).
+  * Model versi terbaik selalu disinkronkan ke root (`model_gesture.tflite`) sehingga skrip inferensi real-time selalu menggunakan model paling mutakhir.
 * **Arsitektur Model Deep Learning (Sesuai Subbab 3.3.1):**
   * *Input Shape:* `(batch_size, 20, 63)`
   * *Stacked LSTM:* Layer 1 (64 unit, return_sequences=True) ➔ Dropout (0.2) ➔ Layer 2 (64 unit, return_sequences=False, unroll=True) ➔ Dropout (0.2).
   * *Dense Layers:* Dense (64 neuron, ReLU) ➔ Output Dense (9 neuron, Softmax).
-* **Hasil Evaluasi Data Uji (Testing Set 15%):**
+* **Hasil Evaluasi Data Uji (Baseline Run 001 - Testing Set 15%):**
   * **Test Accuracy:** **100.00%** (29 dari 29 sampel uji terklasifikasi sempurna).
-  * **Test Loss:** **0.0250**
+  * **Test Loss:** **0.0140**
   * **F1-Score:** 1.0000 merata di seluruh 9 kelas gestur.
-  * Grafik *Confusion Matrix* tersimpan di `confusion_matrix.png` dan kurva loss/akurasi di `training_history.png`.
 * **Ekspor Edge Computing (Raspberry Pi - Subbab 3.3.3):**
   * Model berhasil dikonversi ke format **TensorFlow Lite FP16 (`model_gesture.tflite`)** berukuran **269.9 KB** (efisiensi kompresi 68.9% dari file Keras 867.5 KB) menggunakan *Pure TFLite Builtins* tanpa dependensi Flex ops.
 

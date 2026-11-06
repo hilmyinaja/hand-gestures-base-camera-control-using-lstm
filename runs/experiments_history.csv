@@ -1,0 +1,2 @@
+Run_ID,Timestamp,Total_Samples,Epochs_Trained,Best_Epoch,Train_Acc,Val_Acc,Test_Acc,Test_Loss,Macro_F1,Weighted_F1,Run_Folder
+run_001,2026-11-06 01:58:42,189,85,70,98.47%,100.00%,100.00%,0.0140,1.0000,1.0000,run_001_20261106_0158

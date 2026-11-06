@@ -1,0 +1,83 @@
+{
+    "run_id": "run_001",
+    "timestamp": "2026-11-06 01:58:42",
+    "total_dataset_samples": 189,
+    "epochs_trained": 85,
+    "best_epoch": 70,
+    "train_accuracy_final": 0.9847328066825867,
+    "val_accuracy_final": 1.0,
+    "val_loss_best": 0.014409439638257027,
+    "test_accuracy": 1.0,
+    "test_loss": 0.01403895579278469,
+    "macro_avg_f1_score": 1.0,
+    "weighted_avg_f1_score": 1.0,
+    "classification_report": {
+        "rotate_cw": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 3.0
+        },
+        "rotate_ccw": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 3.0
+        },
+        "next_mode": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 3.0
+        },
+        "lock_unlock": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 4.0
+        },
+        "zoom_in": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 3.0
+        },
+        "zoom_out": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 3.0
+        },
+        "snap_photo": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 4.0
+        },
+        "record_video": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 3.0
+        },
+        "idle": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 3.0
+        },
+        "accuracy": 1.0,
+        "macro avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 29.0
+        },
+        "weighted avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 29.0
+        }
+    }
+}
