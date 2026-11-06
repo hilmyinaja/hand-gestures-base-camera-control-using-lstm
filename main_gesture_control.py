@@ -28,6 +28,9 @@ DISCRETE_COOLDOWN = 1.0        # Jeda aksi diskrit: foto, ganti mode, lock (deti
 SCROLL_COOLDOWN = 0.25         # Jeda scroll kontinu: putar nilai & zoom (250 ms)
 SAFETY_TIMEOUT_SECONDS = 5.0   # Batas waktu buka kunci rekaman sebelum auto re-lock
 
+ENABLE_LOCK_SYSTEM = True      # True = Sistem Safety Lock aktif | False = Mode Bebas (Lock dinonaktifkan)
+                               # (Dapat di-toggle kapan saja saat program berjalan dengan menekan tombol 'B')
+
 MODEL_TFLITE_PATH = "model_gesture.tflite"
 CLASSES_JSON_PATH = "gesture_classes.json"
 MEDIAPIPE_MODEL_PATH = "hand_landmarker.task"
@@ -134,10 +137,11 @@ def main():
         "Zoom": 0        # 1.0x
     }
 
-    is_locked = False                  # Status Kunci Sistem
-    is_recording = False               # Status Rekam Video
-    unlock_for_stop_pending = False    # Kandidat stop video setelah Fist Unlock
-    unlock_pending_start_time = 0      # Timer 5 detik fail-safe
+    lock_system_active = ENABLE_LOCK_SYSTEM  # Toggle Fitur Lock (Bisa di-toggle via tombol 'B')
+    is_locked = False                        # Status Kunci Sistem
+    is_recording = False                     # Status Rekam Video
+    unlock_for_stop_pending = False          # Kandidat stop video setelah Fist Unlock
+    unlock_pending_start_time = 0            # Timer 5 detik fail-safe
 
     # Sliding Window Buffer & Timers
     sliding_window = collections.deque(maxlen=SEQUENCE_LENGTH)
@@ -265,7 +269,14 @@ def main():
 
             # 1. GESTUR KUNCI / BUKA KUNCI (Fist ✊) - Aksi Diskrit
             if target_class == "lock_unlock":
-                if time_since_last_trigger >= DISCRETE_COOLDOWN:
+                if not lock_system_active:
+                    last_action_msg = "Fitur Lock Mati (Bypass Mode Aktif) [B]"
+                    last_action_color = (0, 255, 255)
+                    last_trigger_time = now
+                    sliding_window.clear()
+                    consecutive_counter = 0
+                    candidate_gesture = None
+                elif time_since_last_trigger >= DISCRETE_COOLDOWN:
                     if is_recording:
                         if not unlock_for_stop_pending:
                             unlock_for_stop_pending = True
@@ -288,30 +299,48 @@ def main():
             elif target_class == "record_video":
                 if time_since_last_trigger >= DISCRETE_COOLDOWN:
                     if not is_recording:
-                        if not is_locked:
+                        # Mulai Rekam Video
+                        if not lock_system_active:
                             is_recording = True
-                            is_locked = True
-                            unlock_for_stop_pending = False
-                            last_action_msg = "🔴 REKAM VIDEO DIMULAI (AUTO-LOCKED)"
-                            last_action_color = (0, 0, 255)
-                            last_trigger_time = now
-                            sliding_window.clear()
-                            consecutive_counter = 0
-                            candidate_gesture = None
-                    else:
-                        if not is_locked and unlock_for_stop_pending:
-                            is_recording = False
-                            unlock_for_stop_pending = False
                             is_locked = False
+                            last_action_msg = "🔴 REKAM VIDEO DIMULAI (BYPASS LOCK)"
+                            last_action_color = (0, 0, 255)
+                        else:
+                            if not is_locked:
+                                is_recording = True
+                                is_locked = True
+                                unlock_for_stop_pending = False
+                                last_action_msg = "🔴 REKAM VIDEO DIMULAI (AUTO-LOCKED)"
+                                last_action_color = (0, 0, 255)
+                        last_trigger_time = now
+                        sliding_window.clear()
+                        consecutive_counter = 0
+                        candidate_gesture = None
+                    else:
+                        # Hentikan Rekam Video
+                        if not lock_system_active:
+                            # Jika lock dimatikan, gestur peace langsung stop tanpa perlu kepalan tangan!
+                            is_recording = False
                             last_action_msg = "⏹️ REKAM VIDEO SELESAI & TERSIMPAN"
                             last_action_color = (0, 255, 0)
                             last_trigger_time = now
                             sliding_window.clear()
                             consecutive_counter = 0
                             candidate_gesture = None
+                        else:
+                            if not is_locked and unlock_for_stop_pending:
+                                is_recording = False
+                                unlock_for_stop_pending = False
+                                is_locked = False
+                                last_action_msg = "⏹️ REKAM VIDEO SELESAI & TERSIMPAN"
+                                last_action_color = (0, 255, 0)
+                                last_trigger_time = now
+                                sliding_window.clear()
+                                consecutive_counter = 0
+                                candidate_gesture = None
 
-            # 3. GESTUR LAINNYA (Hanya dieksekusi jika sistem UNLOCKED)
-            elif not is_locked and not is_recording:
+            # 3. GESTUR LAINNYA (Hanya dieksekusi jika sistem UNLOCKED atau Lock dimatikan)
+            elif (not lock_system_active or not is_locked) and not (lock_system_active and is_recording):
                 # A. Ganti Parameter Aktif (Swipe Up) - Aksi Diskrit
                 if target_class == "next_mode":
                     if time_since_last_trigger >= DISCRETE_COOLDOWN:
@@ -410,7 +439,10 @@ def main():
         status_box_y = 75
         cv2.rectangle(frame, (10, status_box_y), (w - 10, status_box_y + 40), (20, 20, 20), -1)
 
-        if is_recording:
+        if not lock_system_active:
+            lock_text = "MODE BEBAS (LOCK OFF) [Tekan B] 🔓"
+            lock_color = (0, 255, 255)
+        elif is_recording:
             if unlock_for_stop_pending:
                 rem = max(0.0, SAFETY_TIMEOUT_SECONDS - (now - unlock_pending_start_time))
                 lock_text = f"SIAP STOP ({rem:.1f}s) - Gestur ✌️"
@@ -423,7 +455,7 @@ def main():
             lock_color = (0, 0, 255) if is_locked else (0, 255, 0)
 
         cv2.putText(frame, lock_text, (20, status_box_y + 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, lock_color, 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, lock_color, 2)
 
         # Feedback Aksi Terakhir di sebelah kanan status bar
         cv2.putText(frame, last_action_msg, (280, status_box_y + 26),
@@ -469,12 +501,26 @@ def main():
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q') or key == 27:
             break
+        elif key == ord('b') or key == ord('B'):
+            lock_system_active = not lock_system_active
+            if not lock_system_active:
+                is_locked = False
+                unlock_for_stop_pending = False
+                last_action_msg = "LOCK MATI: Mode Bebas Aktif [B]"
+                last_action_color = (0, 255, 255)
+            else:
+                last_action_msg = "LOCK HIDUP: Safety Guard Standar [B]"
+                last_action_color = (0, 255, 0)
         elif key == ord('m') or key == ord('M'):
             mirror_view = not mirror_view
         elif key == ord('l') or key == ord('L'):
-            is_locked = not is_locked
-            last_action_msg = f"Manual Toggle: {'TERKUNCI' if is_locked else 'TERBUKA'}"
-            last_action_color = (0, 0, 255) if is_locked else (0, 255, 0)
+            if not lock_system_active:
+                last_action_msg = "Fitur Lock sedang MATI (Tekan B utk aktifkan)"
+                last_action_color = (0, 255, 255)
+            else:
+                is_locked = not is_locked
+                last_action_msg = f"Manual Toggle: {'TERKUNCI' if is_locked else 'TERBUKA'}"
+                last_action_color = (0, 0, 255) if is_locked else (0, 255, 0)
         elif key == ord('r') or key == ord('R'):
             is_recording = not is_recording
             last_action_msg = f"Manual Video: {'REC' if is_recording else 'STOP'}"
