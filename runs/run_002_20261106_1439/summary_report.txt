@@ -1,0 +1,26 @@
+=================================================================
+   RINGKASAN EKSPERIMEN RUN_002 (UNTUK BAB 4 SKRIPSI)   
+=================================================================
+Waktu Pelatihan      : 2026-11-06 14:39:54
+Total Sampel Dataset : 441 sampel (9 kelas)
+Epoch Dilatih        : 50 (Best Epoch: 35)
+Akurasi Uji (Test)   : 95.52%
+Loss Uji (Test)      : 0.1029
+Macro F1-Score       : 0.9645
+
+Classification Report Lengkap:
+              precision    recall  f1-score   support
+
+   rotate_cw     1.0000    0.7000    0.8235        10
+  rotate_ccw     0.7500    1.0000    0.8571         9
+   next_mode     1.0000    1.0000    1.0000        10
+ lock_unlock     1.0000    1.0000    1.0000        10
+     zoom_in     1.0000    1.0000    1.0000         3
+    zoom_out     1.0000    1.0000    1.0000         3
+  snap_photo     1.0000    1.0000    1.0000         3
+record_video     1.0000    1.0000    1.0000        10
+        idle     1.0000    1.0000    1.0000         9
+
+    accuracy                         0.9552        67
+   macro avg     0.9722    0.9667    0.9645        67
+weighted avg     0.9664    0.9552    0.9545        67
