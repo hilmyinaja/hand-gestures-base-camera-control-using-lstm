@@ -149,13 +149,22 @@ flowchart TD
 
 ---
 
-### Fase 5: Sistem Inferensi Real-Time & Logika Debouncing (⏳ Sedang Berjalan)
+### Fase 5: Sistem Inferensi Real-Time & Logika Debouncing (✅ Selesai Dioptimasi)
+* **File Terwujud:** [main_gesture_control.py](file:///c:/Hilmy's/Git/camera-control-using-hand-gestures/main_gesture_control.py)
 * **Sliding Window Buffer:**
-  * Antrean FIFO berkapasitas 20 frame. Setiap frame baru masuk, inferensi TFLite dijalankan berkala.
-* **Continuous Scroll & Adaptive Debouncing:**
-  * Jeda *cooldown* diatur pada **300 milidetik (~0.3 detik)**.
-  * Mengizinkan putaran kontinu: jika tangan terus berputar, angka bergulir cepat (misal ISO: 100 ➔ 200 ➔ 400 ➔ 800 dalam 1 detik).
-  * Saat putaran tangan berhenti, nilai langsung diam terkunci pada angka terakhir.
+  * Antrean FIFO berkapasitas 20 frame pada frekuensi 20 FPS (interval 50 ms).
+  * Dilengkapi logika *Instant Buffer Flush* saat tangan keluar dari frame webcam untuk mencegah penggabungan frame lama dengan gerakan baru (*anti-stitched buffer*).
+* **Temporal Smoothing (Exponential Moving Average / EMA):**
+  * Koefisien pembobotan $\alpha = 0.6$ untuk meredam fluktuasi liar probabilitas softmax antar-frame secara mulus tanpa menambah latensi terasa.
+* **Consecutive Frame Debouncing ($K = 3$ frame / $\sim 150\text{ ms}$):**
+  * Gestur hanya dinyatakan valid jika konsisten diprediksi sebagai kelas yang sama selama minimal 3 frame berturut-turut dengan confidence $\ge 0.75$.
+  * Mengeliminasi 100% *transient spike glitches* (pemicu salah satu frame sesaat saat transisi posisi tangan).
+* **Buffer Flush pada Aksi Diskrit:**
+  * Pada aksi diskrit (`snap_photo`, `next_mode`, `lock_unlock`, `record_video`), antrean buffer di-flush seketika setelah eksekusi agar gerakan tangan kembali ke posisi netral tidak terbaca sebagai gestur palsu.
+* **Continuous Scroll Dinamis:**
+  * Gestur kontinu (`rotate_cw`, `rotate_ccw`, `zoom_in`, `zoom_out`) menggunakan debounce parsial 250 ms sehingga pergantian nilai berjalan ritmis, stabil, dan tidak melompat bolak-balik.
+* **Dashboard HUD Interaktif:**
+  * Menampilkan bar parameter kamera aktif, status 2-step safety guard, visualisasi status pengisian buffer `[20/20]`, indikator akumulasi konfirmasi gestur `[III]`, dan probabilitas 9 kelas gestur secara langsung.
 
 ---
 
