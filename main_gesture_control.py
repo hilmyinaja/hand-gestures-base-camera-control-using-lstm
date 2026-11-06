@@ -21,9 +21,11 @@ TARGET_FPS = 20
 SEQUENCE_LENGTH = 20           # 20 frame temporal sliding window
 FRAME_INTERVAL = 1.0 / TARGET_FPS  # 50 ms antar frame
 
-CONFIDENCE_THRESHOLD = 0.80    # Ambang batas keyakinan (Subbab 3.4.1 Poin 1)
-DISCRETE_COOLDOWN = 1.2        # Jeda aksi diskrit: foto, ganti mode, lock (detik)
-SCROLL_COOLDOWN = 0.3          # Jeda scroll kontinu: putar nilai & zoom (300 ms)
+CONFIDENCE_THRESHOLD = 0.75    # Ambang batas keyakinan diperluas ke 0.75 didukung verifikasi multi-frame
+CONSECUTIVE_FRAMES = 3         # Wajib konsisten 3 frame berurutan (~150 ms) untuk mencegah spike glitch
+EMA_ALPHA = 0.6                # Koefisien Exponential Moving Average untuk meredam jitter probabilitas
+DISCRETE_COOLDOWN = 1.0        # Jeda aksi diskrit: foto, ganti mode, lock (detik)
+SCROLL_COOLDOWN = 0.25         # Jeda scroll kontinu: putar nilai & zoom (250 ms)
 SAFETY_TIMEOUT_SECONDS = 5.0   # Batas waktu buka kunci rekaman sebelum auto re-lock
 
 MODEL_TFLITE_PATH = "model_gesture.tflite"
@@ -145,6 +147,11 @@ def main():
     last_action_color = (0, 255, 128)
     shutter_flash_time = 0
 
+    # Variabel Stabilisasi & Konfirmasi Multiframe (Anti-Glitch / Anti-Flicker)
+    smoothed_probs = None
+    candidate_gesture = None
+    consecutive_counter = 0
+
     mirror_view = True
     start_time = time.time()
     prev_time = time.time()
@@ -179,9 +186,12 @@ def main():
                 lm_norm = extract_normalized_landmarks(result.hand_landmarks[0])
                 sliding_window.append(lm_norm)
             else:
-                # Jika tangan keluar dari frame, perlahan geser antrean
-                if len(sliding_window) > 0:
-                    sliding_window.popleft()
+                # Jika tangan keluar dari frame atau turun, bersihkan buffer seketika!
+                # Ini krusial agar frame lama tidak tersambung dengan gerakan tangan baru.
+                sliding_window.clear()
+                smoothed_probs = None
+                candidate_gesture = None
+                consecutive_counter = 0
             last_sample_time = now
 
         # Gambar Landmark Tangan
@@ -195,21 +205,47 @@ def main():
                 size = 6 if idx == 0 else 4
                 cv2.circle(frame, pt, size, color, -1)
 
-        # --- Evaluasi Inferensi TFLite ---
+        # --- Evaluasi Inferensi TFLite & Temporal Smoothing ---
         detected_class = "idle"
         detected_confidence = 0.0
         all_probs = [0.0] * len(classes)
+        is_triggered = False
 
         if len(sliding_window) == SEQUENCE_LENGTH:
             input_tensor = np.expand_dims(np.array(sliding_window, dtype=np.float32), axis=0)
             interpreter.set_tensor(input_details[0]['index'], input_tensor)
             interpreter.invoke()
-            output_tensor = interpreter.get_tensor(output_details[0]['index'])[0]
+            raw_probs = interpreter.get_tensor(output_details[0]['index'])[0]
 
-            all_probs = output_tensor
-            max_idx = int(np.argmax(output_tensor))
-            detected_confidence = float(output_tensor[max_idx])
-            detected_class = classes[max_idx]
+            # 1. Exponential Moving Average (EMA) untuk meredam jitter output
+            if smoothed_probs is None:
+                smoothed_probs = raw_probs.copy()
+            else:
+                smoothed_probs = (EMA_ALPHA * raw_probs) + ((1.0 - EMA_ALPHA) * smoothed_probs)
+
+            all_probs = smoothed_probs
+            max_idx = int(np.argmax(smoothed_probs))
+            raw_top_class = classes[max_idx]
+            raw_top_conf = float(smoothed_probs[max_idx])
+
+            detected_class = raw_top_class
+            detected_confidence = raw_top_conf
+
+            # 2. Consecutive Frame Debouncing & Verification
+            # Hanya akumulasi konfirmasi jika keyakinan tinggi dan bukan pose idle
+            if raw_top_conf >= CONFIDENCE_THRESHOLD and raw_top_class != "idle":
+                if raw_top_class == candidate_gesture:
+                    consecutive_counter += 1
+                else:
+                    candidate_gesture = raw_top_class
+                    consecutive_counter = 1
+            else:
+                candidate_gesture = None
+                consecutive_counter = 0
+
+            # Gestur dinyatakan terkonfirmasi jika bertahan minimal CONSECUTIVE_FRAMES
+            if consecutive_counter >= CONSECUTIVE_FRAMES and candidate_gesture is not None:
+                is_triggered = True
 
         # --- 2-Step Video Safety Guard Fail-Safe Timeout ---
         if is_recording and unlock_for_stop_pending:
@@ -221,20 +257,17 @@ def main():
                 last_action_msg = "Timeout 5s! Sistem terkunci kembali"
                 last_action_color = (0, 0, 255)
 
-        # --- Logika Eksekusi Perintah & State Machine ---
-        # Terapkan ambang batas keyakinan (Confidence Threshold >= 0.80)
-        is_confident = (detected_confidence >= CONFIDENCE_THRESHOLD) and (detected_class != "idle")
-
-        if is_confident:
+        # --- Logika Eksekusi Perintah & State Machine Terverifikasi ---
+        if is_triggered and candidate_gesture:
+            target_class = candidate_gesture
             active_param_name = CAMERA_MODES[current_mode_idx]
             time_since_last_trigger = now - last_trigger_time
 
-            # 1. GESTUR KUNCI / BUKA KUNCI (Fist ✊)
-            if detected_class == "lock_unlock":
+            # 1. GESTUR KUNCI / BUKA KUNCI (Fist ✊) - Aksi Diskrit
+            if target_class == "lock_unlock":
                 if time_since_last_trigger >= DISCRETE_COOLDOWN:
                     if is_recording:
                         if not unlock_for_stop_pending:
-                            # Buka kunci untuk persiapan stop rekaman
                             unlock_for_stop_pending = True
                             is_locked = False
                             unlock_pending_start_time = now
@@ -246,12 +279,15 @@ def main():
                         last_action_msg = f"Sistem {status_str}"
                         last_action_color = (0, 0, 255) if is_locked else (0, 255, 0)
                     last_trigger_time = now
+                    # Flush buffer agar tidak memicu gestur lain saat tangan dilepas
+                    sliding_window.clear()
+                    consecutive_counter = 0
+                    candidate_gesture = None
 
-            # 2. GESTUR REKAM VIDEO (Peace ✌️)
-            elif detected_class == "record_video":
+            # 2. GESTUR REKAM VIDEO (Peace ✌️) - Aksi Diskrit
+            elif target_class == "record_video":
                 if time_since_last_trigger >= DISCRETE_COOLDOWN:
                     if not is_recording:
-                        # Mulai Rekam -> AUTO LOCK seketika!
                         if not is_locked:
                             is_recording = True
                             is_locked = True
@@ -259,8 +295,10 @@ def main():
                             last_action_msg = "🔴 REKAM VIDEO DIMULAI (AUTO-LOCKED)"
                             last_action_color = (0, 0, 255)
                             last_trigger_time = now
+                            sliding_window.clear()
+                            consecutive_counter = 0
+                            candidate_gesture = None
                     else:
-                        # Hentikan Rekam (Hanya boleh jika kunci sudah dibuka dengan Fist ✊)
                         if not is_locked and unlock_for_stop_pending:
                             is_recording = False
                             unlock_for_stop_pending = False
@@ -268,31 +306,37 @@ def main():
                             last_action_msg = "⏹️ REKAM VIDEO SELESAI & TERSIMPAN"
                             last_action_color = (0, 255, 0)
                             last_trigger_time = now
-                        else:
-                            # Abaikan jika masih terkunci
-                            pass
+                            sliding_window.clear()
+                            consecutive_counter = 0
+                            candidate_gesture = None
 
             # 3. GESTUR LAINNYA (Hanya dieksekusi jika sistem UNLOCKED)
             elif not is_locked and not is_recording:
-                # A. Ganti Parameter Aktif (Swipe Up)
-                if detected_class == "next_mode":
+                # A. Ganti Parameter Aktif (Swipe Up) - Aksi Diskrit
+                if target_class == "next_mode":
                     if time_since_last_trigger >= DISCRETE_COOLDOWN:
                         current_mode_idx = (current_mode_idx + 1) % len(CAMERA_MODES)
                         new_mode = CAMERA_MODES[current_mode_idx]
                         last_action_msg = f"Mode Aktif: {new_mode} ({param_indices[new_mode]})"
                         last_action_color = (0, 255, 255)
                         last_trigger_time = now
+                        sliding_window.clear()
+                        consecutive_counter = 0
+                        candidate_gesture = None
 
-                # B. Jepret Foto (Snap Photo 🤏)
-                elif detected_class == "snap_photo":
+                # B. Jepret Foto (Snap Photo 🤏) - Aksi Diskrit
+                elif target_class == "snap_photo":
                     if time_since_last_trigger >= DISCRETE_COOLDOWN:
                         shutter_flash_time = now
                         last_action_msg = "📸 JEPRET FOTO! Shutter Released"
                         last_action_color = (0, 255, 0)
                         last_trigger_time = now
+                        sliding_window.clear()
+                        consecutive_counter = 0
+                        candidate_gesture = None
 
-                # C. Putar Searah Jarum Jam (Rotate CW - Naikkan Nilai)
-                elif detected_class == "rotate_cw":
+                # C. Putar Searah Jarum Jam (Rotate CW - Naikkan Nilai) - Aksi Kontinu
+                elif target_class == "rotate_cw":
                     if time_since_last_trigger >= SCROLL_COOLDOWN:
                         table = PARAM_TABLES[active_param_name]
                         if param_indices[active_param_name] < len(table) - 1:
@@ -301,9 +345,10 @@ def main():
                         last_action_msg = f"{active_param_name} Naik (+1) ➔ {val}"
                         last_action_color = (0, 255, 128)
                         last_trigger_time = now
+                        consecutive_counter = 1  # Reset parsial untuk scroll yang halus dan ritmis
 
-                # D. Putar Lawan Jarum Jam (Rotate CCW - Turunkan Nilai)
-                elif detected_class == "rotate_ccw":
+                # D. Putar Lawan Jarum Jam (Rotate CCW - Turunkan Nilai) - Aksi Kontinu
+                elif target_class == "rotate_ccw":
                     if time_since_last_trigger >= SCROLL_COOLDOWN:
                         table = PARAM_TABLES[active_param_name]
                         if param_indices[active_param_name] > 0:
@@ -312,9 +357,10 @@ def main():
                         last_action_msg = f"{active_param_name} Turun (-1) ➔ {val}"
                         last_action_color = (0, 200, 255)
                         last_trigger_time = now
+                        consecutive_counter = 1
 
-                # E. Zoom In (Pinch Out)
-                elif detected_class == "zoom_in":
+                # E. Zoom In (Pinch Out) - Aksi Kontinu
+                elif target_class == "zoom_in":
                     if time_since_last_trigger >= SCROLL_COOLDOWN:
                         z_table = PARAM_TABLES["Zoom"]
                         if param_indices["Zoom"] < len(z_table) - 1:
@@ -322,9 +368,10 @@ def main():
                         last_action_msg = f"Zoom In (+): {z_table[param_indices['Zoom']]}"
                         last_action_color = (255, 128, 0)
                         last_trigger_time = now
+                        consecutive_counter = 1
 
-                # F. Zoom Out (Pinch In)
-                elif detected_class == "zoom_out":
+                # F. Zoom Out (Pinch In) - Aksi Kontinu
+                elif target_class == "zoom_out":
                     if time_since_last_trigger >= SCROLL_COOLDOWN:
                         z_table = PARAM_TABLES["Zoom"]
                         if param_indices["Zoom"] > 0:
@@ -332,6 +379,7 @@ def main():
                         last_action_msg = f"Zoom Out (-): {z_table[param_indices['Zoom']]}"
                         last_action_color = (255, 128, 0)
                         last_trigger_time = now
+                        consecutive_counter = 1
 
         # --- Efek Visual Shutter Flash Foto ---
         if now - shutter_flash_time < 0.12:
@@ -381,19 +429,29 @@ def main():
         cv2.putText(frame, last_action_msg, (280, status_box_y + 26),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, last_action_color, 1)
 
-        # 3. Bar Probabilitas Deteksi Terkini di Bawah
+        # 3. Bar Probabilitas & Status Konfirmasi di Bawah Layar
         bot_y = h - 45
         cv2.rectangle(frame, (10, bot_y), (w - 10, h - 10), (25, 25, 25), -1)
 
-        det_color = (0, 255, 128) if detected_confidence >= CONFIDENCE_THRESHOLD else (140, 140, 140)
-        cv2.putText(frame, f"AI: {detected_class.upper()} ({detected_confidence*100:.1f}%)",
-                    (20, bot_y + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, det_color, 2)
+        buf_len = len(sliding_window)
+        is_high_conf = (detected_confidence >= CONFIDENCE_THRESHOLD and detected_class != "idle")
 
-        # Bar Visual Confidence
-        bar_x = 280
-        bar_w = int(detected_confidence * (w - bar_x - 30))
+        if is_triggered:
+            det_color = (0, 255, 0)      # Hijau: Berhasil terpicu
+        elif is_high_conf:
+            det_color = (0, 255, 255)    # Kuning: Sedang diakumulasi konfirmasi
+        else:
+            det_color = (150, 150, 150)  # Abu-abu: Idle / di bawah ambang batas
+
+        conf_blocks = "I" * consecutive_counter + "-" * max(0, CONSECUTIVE_FRAMES - consecutive_counter)
+        status_txt = f"AI: {detected_class.upper()} ({detected_confidence*100:.0f}%) [{conf_blocks}] | Buf: {buf_len}/{SEQUENCE_LENGTH}"
+        cv2.putText(frame, status_txt, (20, bot_y + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.48, det_color, 2 if is_triggered else 1)
+
+        # Bar Visual Confidence di Kanan Bawah
+        bar_x = w - 160
+        bar_w = int(detected_confidence * 140)
         cv2.rectangle(frame, (bar_x, bot_y + 12), (bar_x + bar_w, bot_y + 23), det_color, -1)
-        cv2.rectangle(frame, (bar_x, bot_y + 12), (w - 30, bot_y + 23), (80, 80, 80), 1)
+        cv2.rectangle(frame, (bar_x, bot_y + 12), (bar_x + 140, bot_y + 23), (80, 80, 80), 1)
 
         # 4. Panel Mini 9 Probabilitas Kelas (di kanan)
         menu_y = 135
